@@ -5,7 +5,7 @@ from typing import Optional
 @dataclass
 class UF:
     """
-    Basic unuion find without slots
+    Basic union find without slots
     >>> uf = UF()
     >>> x,y,z = [uf.makeset() for _ in range(3)]
     >>> uf.union(x,y)
@@ -35,8 +35,28 @@ class UF:
         return self.find(x) == self.find(y)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, order=True)
 class Slot:
+    """
+    Slot = Variable
+    Slotted = has holes you can fill with slots = parametrized
+
+    Slots
+
+    Free variables sometimes
+    BVar(int) - a de bruijn variable
+    FVar(int) - might be just a fresh counter or it might be a de beuijn level or (string, int) for fresh counter + name
+    FVar(string)
+
+    Shape (numeric) slot != fvar. Where shape slots are normalized lexicographically in enodes. Maybe a bit more like a bvar https://www.swi-prolog.org/pldoc/man?predicate=numbervars/3
+    fresh slots
+    named slots
+
+    ~bvar(int) in the sense that the integers refer to variables in a structurally defined way
+    fresh_fvar(int)
+    named_fvar(string)
+    """
+
     name: int
 
     def __repr__(self):
@@ -52,12 +72,17 @@ def fresh_slot():
     return Slot(counter)
 
 
+# class Symmettry / Perm:? for self renames
+
+
 @dataclass(frozen=True)
 class Renaming:
     """
     A renaming is a mapping from slots to slots
     It is a bijective map.
     The domain and codomain may not be the same set
+
+    The main use case where they may be the same set is a symmetry.
     """
 
     map: list[tuple[Slot, Slot]]
@@ -85,10 +110,43 @@ class Renaming:
         raise KeyError(key)
 
     def compose(self, q):
+        """
+        self : X -> Y
+        q : Y -> Z
+        self @ q : X -> Z
+        """
+
         return Renaming([(a, q[b]) for (a, b) in self])
+
+    def __matmul__(self, q):
+        # self is renaming X -> Y
+        # q is renaming Y -> Z
+        # returns renaming X -> Z
+        return self.compose(q)
+
+    def __mul__(self, eid):
+        # renaming * eid
+        # takes eid : Y
+        # self : Y -> Z
+        # returns Z
+        if isinstance(eid, int):
+            return RenamedId(eid, self)
+        elif isinstance(eid, RenamedId):
+            # eid.id : X
+            # eid.renaming : X -> Y
+            # eid : Y
+            # self : Y -> Z
+            return RenamedId(eid.id, eid.renaming.compose(self))
+        else:
+            raise TypeError(eid)
 
     def __iter__(self):
         return iter(self.map)
+
+
+def rename_to_fresh(slots: list[Slot]) -> tuple[list[Slot], Renaming]:
+    freshs = [fresh_slot() for _ in slots]
+    return freshs, Renaming(list(zip(slots, freshs)))
 
 
 """
@@ -112,9 +170,19 @@ class AppliedEId:
         return set(self.slots)
 """
 
-# rudi and mhicel hate these ^
+# rudi and michel hate these ^
 
 type Id = int
+
+"""
+Conceptually
+e3 =   {f(slot42, g(slot8)), }
+
+Ids are handles to _actual_ sets of terms with slots at leaves.
+
+e3 =   {f($42, a, g($8)), f() }
+
+"""
 
 
 @dataclass(frozen=True)
@@ -126,13 +194,82 @@ class RenamedId:
     def __repr__(self):
         return f"{self.id} @ {self.renaming}"
 
+    def __getitem__(self, idx):
+        return sorted(self.renaming.values())[idx]
+
+    def slots(self):
+        return set(self.renaming.values())
+
+
+"""
+Conceptually a renamed slot is the same set as the id, but with the slots renamed
+
+(e3, [$42 -> $7, $8 -> $14]) =   {f($7, a, g($14)), ... }
+
+
+id: Id # :: X
+renaming: Renaming # :: X -> Y
+
+where X is a set of slots like {$42, $8} and Y is a set of slots like {$7, $14}
+
+So things kind of need to "type check" to make any sense at all.
+
+"""
 
 # rename @ {f(slots[0], g(slots[1])), ...} = {f(renaming(slots[0]), g(renaming(slots[1])), ...}
+
+"""
+3 main interpretations of what eids might mean (even ignoring slots):
+1. eid is exactly one syntactic term, like in a hashcons
+2. eid is a set of terms considered to be equivalent for some purposes {1 + 2, 2 + 1, 3} A set of meaningless structural terms
+3. eid refers to exactly one semantic entity, which is somehow a quotient of a term by it's equivalent terms  (1 + 2) == (2 + 1) == 3. Different syntaxtic terms but they "are" the same things interpreted in the Naturals.
+
+Another distinction: 
+a. Do eids refer to one term
+b. do they refer to exactly one set at the time of creation (aegraph style)
+c. do they desctrively refer to the current understanding of that equivalence class, which grows with unions. This is a conceptual choice.
+
+In 3, a identity rename is TRULY equal to the eids itself. In this sense, RenamedId can equal an Id.
+
+
+Interpreting eids as sets of terms
+1a. The mapping term -> term. Can be interpreted as ground rewrite rule. The mapping is convergent.
+1b. 
+1c.
+2b. find turns a set into a bigger set
+2c. `find` is a an identity function
+3. `find` is an identity function
+
+
+slotted:
+1. e14 = f($42, $17)
+2. e14 = {f($42, $17), f($17, $42)}
+3. Rudi lives in here.
+
+All interpretations still exists but note slots are SERIOUS. They really refer to _exactly_ those slot numbers.
+
+In unification variables, not slots: f(X,Y) I don't mean "just" f(X,Y) that's what I mean by serious. I often kind of mean {f(X,Y), f(Y,X), f(A,B), ...} (what?)"unserious". `fun (X,Y) => f(X,Y)` sometimes.  or do I mean `fun {X,Y} => f(X,Y)` or  `fun {x=_,y=_} => f(x,y)` keyword arguments
+
+Are shape slots for serious?
+
+"""
+
+"""
+
+Rudi kind of wants everything to always have been a RenamedId. Id is an implementation detail. Id has a meaningless choice of what slots ended being slot set of the terms that correspond to that Id.
+
+User never gets access to Id.
+
+"""
 
 
 @dataclass
 class SlottedUF:
-    uf: list[RenamedId] = field(default_factory=list)
+    # These are implementation details.
+    # Look at API
+    uf: list[RenamedId] = field(
+        default_factory=list
+    )  # Id -> RenamedId. Really wanted RenamedId -> RenamedId conceptually. But doing it this way is deduplicating in exactly the way we want to be deduplicating.
     public_slots: dict[Id, set[Slot]] = field(default_factory=dict)
     # uf table is conceptually identity function. Yeaaaa?
     # uf : list[tuple[Renaming, Id]]
@@ -161,24 +298,68 @@ class SlottedUF:
         return eid
 
     def find(self, ma: RenamedId) -> RenamedId:
+        # U[m*a] = m*U[id*a] = m*(m'*b)
+        # find[m*a] = m*find[id*a] = m*uf[a] = m*(m'*b) = (m o m')*b
+        assert isinstance(ma, RenamedId)
         rename = ma.renaming
-        a = ma.id
+        a = ma.id  # This is kind of a canonization step. Turning a renamed thing into a "canonical" named version of it
         while True:
             mb = self.uf[a]
             print(rename)
-            rename = mb.renaming.compose(rename)
+            rename = mb.renaming @ rename
             print(rename)
             if mb.id == a:
                 return RenamedId(id=a, renaming=rename)
             a = mb.id
 
+    """
+    {f($42)} Union {f($31)}---> discover redundancy ---> {f($0}, f($1), f($2), ...} which is a _big_ semantic move, but a small implementation move.
+
+    public_slots({f($42)}) = {$42}
+    NO!!!: public_slots({f($0}, f($1), f($2), ...}) = {$0, $1, $2, ...}
+    slots(f($42, $13)) = {$42, $13}
+    public_slots({t1, t2, t3, ...}) = intersection({slots(t1), slots(t2), slots(t3), ...})
+    
+    
+    union($x - $x, $y - $y)
+    2 choices: mutatate old public slots or make new eclass e, with less slots and union to it. This is like style b above ie. aegraphs.
+
+    """
+
+    def shrink_slots(self, a: RenamedId, remaining_slots: set[Slot]):
+        pslots = self.public_slots[a.id]
+        assert pslots >= remaining_slots
+        if pslots == remaining_slots:
+            return  # nothing to do
+        b = self.makeset(len(remaining_slots))
+
+        # a.id : X
+        # a.m : X -> Y
+        # a : Y
+        # remaining_slots : Y
+        # pslots : Y
+        # b : Z
+        # need renaming : Z -> X
+        r = Renaming(list(zip(b.renaming.values(), remaining_slots)))  # Z -> Y
+        renaming = r @ a.renaming.rev()  # Z -> X
+        self.uf[a.id] = RenamedId(renaming=renaming, id=b.id)
+
     def union(self, a: RenamedId, b: RenamedId) -> bool:
-        set(a.renaming.values()) != set(b.renaming.values())
-        # if :
-        #    # redundant slots
+        # union(self, m1*a1, m2*a2)
+        # union(self, U[m1*a1], U[m2*a2])
+        # union(self, m3 * a3, m4 * a4)
+        # union(self, id * a3, (m3^-1 o m4) * a4)
+        # ufunion(self, a3, (m3^-1 o m4) * a4)
+        #
+        a, b = self.find(a), self.find(b)
+        aslots = set(a.renaming.values())
+        bslots = set(b.renaming.values())
+        if aslots != bslots:
+            self.shrink_slots(a, aslots & bslots)
+            self.shrink_slots(b, aslots & bslots)
+            # redundant slots
         #    a.rev()[]
         a, b = self.find(a), self.find(b)
-        print(a, b)
         if a.id != b.id:
             self.uf[a.id] = RenamedId(b.id, b.renaming.compose(a.renaming.rev()))
             return True
@@ -210,11 +391,23 @@ x,y
 uf
 """
 uf = SlottedUF()
-x, y, z = [uf.makeset(2) for _ in range(3)]
+x, y = [uf.makeset(2) for _ in range(2)]
 slotsy = list(uf.public_slots[y.id])
 slotsx = list(uf.public_slots[x.id])
 
-y1 = RenamedId(y.id, Renaming([(slotsy[0], slotsx[1]), (slotsy[1], slotsx[0])]))
 
+# y1 = RenamedId(y.id, Renaming([(slotsy[0], slotsx[1]), (slotsy[1], slotsx[0])]))
+r = Renaming([(x[0], y[0]), (x[1], y[1])]).rev()
+y1 = r * y
 uf.union(x, y1)
-uf, x, y
+assert uf.is_eq(x, y1)
+assert not uf.is_eq(y, y1)  # don't even ahve the same domain
+assert uf.find(x).slots() <= x.slots()
+assert uf.find(y1).slots() <= x.slots()
+assert uf.find(y).slots() <= y.slots()
+
+# z = uf.makeset(1)
+# should destroy all slots
+uf.union(x, y)
+assert uf.find(x).slots() == set()
+assert uf.find(y1).slots() == set()

@@ -85,10 +85,14 @@ class Renaming:
     The main use case where they may be the same set is a symmetry.
     """
 
-    map: list[tuple[Slot, Slot]]
+    map: frozenset[tuple[Slot, Slot]]
+
+    @classmethod
+    def of_list(cls, lst: list[tuple[Slot, Slot]]):
+        return cls(frozenset(lst))
 
     def rev(self):
-        return Renaming([(b, a) for (a, b) in self.map])
+        return Renaming.of_list([(b, a) for (a, b) in self.map])
 
     def keys(self):
         return [a for (a, b) in self.map]
@@ -104,7 +108,6 @@ class Renaming:
 
     def __getitem__(self, key: Slot):
         for a, b in self.map:
-            print((a, b, key))
             if a == key:
                 return b
         raise KeyError(key)
@@ -116,7 +119,10 @@ class Renaming:
         self @ q : X -> Z
         """
 
-        return Renaming([(a, q[b]) for (a, b) in self])
+        return Renaming.of_list([(a, q[b]) for (a, b) in self])
+
+    def compose_partial(self, q):
+        return Renaming.of_list([(a, q[b]) for (a, b) in self if b in q.keys()])
 
     def __matmul__(self, q):
         # self is renaming X -> Y
@@ -146,7 +152,7 @@ class Renaming:
 
 def rename_to_fresh(slots: list[Slot]) -> tuple[list[Slot], Renaming]:
     freshs = [fresh_slot() for _ in slots]
-    return freshs, Renaming(list(zip(slots, freshs)))
+    return freshs, Renaming.of_list(list(zip(slots, freshs)))
 
 
 """
@@ -192,13 +198,60 @@ class RenamedId:
     renaming: Renaming
 
     def __repr__(self):
-        return f"{self.id} @ {self.renaming}"
+        return f"{self.renaming} * id{self.id}"
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Slot:
         return sorted(self.renaming.values())[idx]
 
     def slots(self):
         return set(self.renaming.values())
+
+
+# A perm is a renaming, where keys = values.
+type Perm = Renaming
+
+
+class Group:
+    perms: set[Renaming]
+
+    def __init__(self, elems: set[Slot]):
+        identity = Renaming.of_list(list(zip(elems, elems)))
+        self.perms = {identity}
+
+    def contains(self, p: Perm):
+        return p in self.perms
+
+    def add(self, p: Perm):
+        self.perms.add(p)
+        self.complete()
+
+    def complete(self):
+        while True:
+            cnt = len(self.perms)
+            newperms = []
+            for p in self.perms:
+                newperms.append(p.rev())
+            for p1 in self.perms:
+                for p2 in self.perms:
+                    newperms.append(p1.compose(p2))
+            self.perms.update(newperms)
+            if cnt == len(self.perms):
+                break
+
+    def orbit(self, slot: Slot) -> set[Slot]:
+        return {p.get(slot) for p in self.perms}
+
+
+def test_group():
+    s1 = fresh_slot()
+    s2 = fresh_slot()
+    s3 = fresh_slot()
+    g = Group({s1, s2, s3})
+    p12 = Renaming.of_list([(s1, s2), (s2, s1), (s3, s3)])
+    p23 = Renaming.of_list([(s2, s3), (s3, s2), (s1, s1)])
+    g.add(p12)
+    g.add(p23)
+    assert g.contains(p12.compose(p23))
 
 
 """
@@ -262,6 +315,11 @@ User never gets access to Id.
 
 """
 
+"""
+Shoudl Keyword Id be a idfferent type from slot? and then split Renaming into keywrod -> slot mappings, and perm = slot -> slot, keyword -> keyword mapping
+
+"""
+
 
 @dataclass
 class SlottedUF:
@@ -271,6 +329,7 @@ class SlottedUF:
         default_factory=list
     )  # Id -> RenamedId. Really wanted RenamedId -> RenamedId conceptually. But doing it this way is deduplicating in exactly the way we want to be deduplicating.
     public_slots: dict[Id, set[Slot]] = field(default_factory=dict)
+    symmetries: dict[Id, Group] = field(default_factory=dict)
     # uf table is conceptually identity function. Yeaaaa?
     # uf : list[tuple[Renaming, Id]]
 
@@ -292,9 +351,10 @@ class SlottedUF:
         """
         slots = [fresh_slot() for _ in range(arity)]
         n = len(self.uf)
-        eid = RenamedId(n, Renaming([(a, a) for a in slots]))
+        eid = RenamedId(n, Renaming.of_list([(a, a) for a in slots]))
         self.uf.append(eid)
         self.public_slots[n] = set(slots)
+        self.symmetries[n] = Group(set(slots))
         return eid
 
     def find(self, ma: RenamedId) -> RenamedId:
@@ -305,9 +365,7 @@ class SlottedUF:
         a = ma.id  # This is kind of a canonization step. Turning a renamed thing into a "canonical" named version of it
         while True:
             mb = self.uf[a]
-            print(rename)
             rename = mb.renaming @ rename
-            print(rename)
             if mb.id == a:
                 return RenamedId(id=a, renaming=rename)
             a = mb.id
@@ -324,6 +382,13 @@ class SlottedUF:
     union($x - $x, $y - $y)
     2 choices: mutatate old public slots or make new eclass e, with less slots and union to it. This is like style b above ie. aegraphs.
 
+
+    Ok. Now let's consider symmettrices
+
+    {f($42, $13} -perm-> {f($13, $42)} 
+
+    {f($42, $13, f($13, $42)} 
+
     """
 
     def shrink_slots(self, a: RenamedId, remaining_slots: set[Slot]):
@@ -331,6 +396,12 @@ class SlottedUF:
         assert pslots >= remaining_slots
         if pslots == remaining_slots:
             return  # nothing to do
+        """
+        We need to lose all the the slots related to the losing slots by symmettry
+        """
+        G = self.symmetries[a.id]
+        losing_slots = {slot for s in pslots - remaining_slots for slot in G.orbit(s)}
+        remaining_slots = remaining_slots - losing_slots
         b = self.makeset(len(remaining_slots))
 
         # a.id : X
@@ -340,9 +411,13 @@ class SlottedUF:
         # pslots : Y
         # b : Z
         # need renaming : Z -> X
-        r = Renaming(list(zip(b.renaming.values(), remaining_slots)))  # Z -> Y
+        r = Renaming.of_list(list(zip(b.renaming.values(), remaining_slots)))  # Z -> Y
         renaming = r @ a.renaming.rev()  # Z -> X
         self.uf[a.id] = RenamedId(renaming=renaming, id=b.id)
+        for perm in self.symmetries[a.id].perms:
+            self.symmetries[b.id].add(
+                renaming.compose_partial(perm.compose_partial(renaming.rev()))
+            )
 
     def union(self, a: RenamedId, b: RenamedId) -> bool:
         # union(self, m1*a1, m2*a2)
@@ -351,29 +426,56 @@ class SlottedUF:
         # union(self, id * a3, (m3^-1 o m4) * a4)
         # ufunion(self, a3, (m3^-1 o m4) * a4)
         #
-        a, b = self.find(a), self.find(b)
-        aslots = set(a.renaming.values())
-        bslots = set(b.renaming.values())
-        if aslots != bslots:
-            self.shrink_slots(a, aslots & bslots)
-            self.shrink_slots(b, aslots & bslots)
-            # redundant slots
-        #    a.rev()[]
+        while True:
+            a, b = self.find(a), self.find(b)
+            aslots = set(a.renaming.values())
+            bslots = set(b.renaming.values())
+            if aslots != bslots:
+                self.shrink_slots(a, aslots & bslots)
+                self.shrink_slots(b, aslots & bslots)
+                # redundant slots
+            else:
+                break
+            #    a.rev()[]
         a, b = self.find(a), self.find(b)
         if a.id != b.id:
-            self.uf[a.id] = RenamedId(b.id, b.renaming.compose(a.renaming.rev()))
+            # TODO: merge symmettries
+            m = b.renaming.compose(a.renaming.rev())
+            # a : Z
+            # a.id : X
+            # b.id : Y
+            # a.renaming : X -> Z
+            # b.renaming : Y -> Z
+            # m = b.renaming @ a.renaming.rev : Y -> X
+            # b : Z
+            # perm : X -> X
+            # m @ perm @ m.rev : Y -> Y
+            for perm in self.symmetries[a.id].perms:
+                self.symmetries[b.id].add(m @ perm @ m.rev())
+            self.uf[a.id] = RenamedId(id=b.id, renaming=m)
             return True
         else:
-            # symmettries
+            self.symmetries[a.id].add(a.renaming.rev() @ b.renaming)
             return False
 
     def is_eq(self, a: RenamedId, b: RenamedId) -> bool:
         a = self.find(a)
         b = self.find(b)
+        if set(a.renaming.values()) != set(b.renaming.values()):
+            return False
         # but actually symmettries
-        return a.id == b.id and all(
-            a.renaming.get(s) == b.renaming.get(s) for s in a.renaming.keys()
+        # a.id : X
+        # a.renaming : X -> Y
+        # b.id : X
+        # b.renaming : X -> Y
+        # a.renaming @ b.renaming.rev() : X -> X
+        return (
+            a.id == b.id
+            and a.renaming @ b.renaming.rev() in self.symmetries[a.id].perms
         )
+        # all(
+        #    a.renaming.get(s) == b.renaming.get(s) for s in a.renaming.keys()
+        # )
 
 
 """
@@ -390,52 +492,43 @@ uf
 x,y
 uf
 """
-uf = SlottedUF()
-x, y = [uf.makeset(2) for _ in range(2)]
-slotsy = list(uf.public_slots[y.id])
-slotsx = list(uf.public_slots[x.id])
 
 
-# y1 = RenamedId(y.id, Renaming([(slotsy[0], slotsx[1]), (slotsy[1], slotsx[0])]))
-r = Renaming([(x[0], y[0]), (x[1], y[1])]).rev()
-y1 = r * y
-uf.union(x, y1)
-assert uf.is_eq(x, y1)
-assert not uf.is_eq(y, y1)  # don't even ahve the same domain
-assert uf.find(x).slots() <= x.slots()
-assert uf.find(y1).slots() <= x.slots()
-assert uf.find(y).slots() <= y.slots()
+def test_symmettry():
+    uf = SlottedUF()
+    x = uf.makeset(2)
+    perm = Renaming.of_list([(x[0], x[1]), (x[1], x[0])])
+    x1 = perm * x
+    uf.union(x, x1)
+    assert uf.is_eq(x, x1)
+    assert len(uf.symmetries[x.id].perms) == 2
 
-# z = uf.makeset(1)
-# should destroy all slots
-uf.union(x, y)
-assert uf.find(x).slots() == set()
-assert uf.find(y1).slots() == set()
 
-# A perm is a renaming, where keys = values.
-type Perm = Renaming
+"""
+TODO:
+Check that redundancy propagate symmettries properly
+Quickcheck something?
+"""
 
-class Group:
-    perms: list[Renaming]
 
-    def __init__(self, elems: set[Slot]):
-        identity = Renaming(zip(elems, elems))
-        self.perms = [identity]
+def test_basic():
+    uf = SlottedUF()
+    x, y = [uf.makeset(2) for _ in range(2)]
+    slotsy = list(uf.public_slots[y.id])
+    slotsx = list(uf.public_slots[x.id])
 
-    def contains(self, p: Perm):
-        return p in self.perms
+    # y1 = RenamedId(y.id, Renaming([(slotsy[0], slotsx[1]), (slotsy[1], slotsx[0])]))
+    r = Renaming.of_list([(x[0], y[0]), (x[1], y[1])]).rev()
+    y1 = r * y
+    uf.union(x, y1)
+    assert uf.is_eq(x, y1)
+    assert not uf.is_eq(y, y1)  # don't even ahve the same domain
+    assert uf.find(x).slots() <= x.slots()
+    assert uf.find(y1).slots() <= x.slots()
+    assert uf.find(y).slots() <= y.slots()
 
-    def add(self, p: Perm):
-        self.perms.add(p)
-        self.complete()
-
-    def complete(self):
-        while True:
-            cnt = len(self.perms)
-            for p in self.perms:
-                self.perms.add(p.rev())
-            for p1 in self.perms:
-                for p2 in self.perms:
-                    self.perms.add(p1.compose(p2))
-            if cnt == len(self.perms):
-                break
+    # z = uf.makeset(1)
+    # should destroy all slots
+    uf.union(x, y)
+    assert uf.find(x).slots() == set()
+    assert uf.find(y1).slots() == set()

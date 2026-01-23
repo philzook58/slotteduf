@@ -411,3 +411,31 @@ assert uf.find(y).slots() <= y.slots()
 uf.union(x, y)
 assert uf.find(x).slots() == set()
 assert uf.find(y1).slots() == set()
+
+# A perm is a renaming, where keys = values.
+type Perm = Renaming
+
+class Group:
+    perms: list[Renaming]
+
+    def __init__(self, elems: set[Slot]):
+        identity = Renaming(zip(elems, elems))
+        self.perms = [identity]
+
+    def contains(self, p: Perm):
+        return p in self.perms
+
+    def add(self, p: Perm):
+        self.perms.add(p)
+        self.complete()
+
+    def complete(self):
+        while True:
+            cnt = len(self.perms)
+            for p in self.perms:
+                self.perms.add(p.rev())
+            for p1 in self.perms:
+                for p2 in self.perms:
+                    self.perms.add(p1.compose(p2))
+            if cnt == len(self.perms):
+                break

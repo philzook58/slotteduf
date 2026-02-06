@@ -35,6 +35,15 @@ class UF:
         return self.find(x) == self.find(y)
 
 
+counter = 0
+
+
+def fresh_slot():
+    global counter
+    counter += 1
+    return Slot(counter)
+
+
 @dataclass(frozen=True, order=True)
 class Slot:
     """
@@ -63,14 +72,11 @@ class Slot:
     def __repr__(self):
         return f"${self.name}"
 
-
-counter = 0
-
-
-def fresh_slot():
-    global counter
-    counter += 1
-    return Slot(counter)
+    @classmethod
+    def fresh(cls):
+        global counter
+        counter += 1
+        return cls(counter)
 
 
 # class Symmettry / Perm:? for self renames
@@ -211,7 +217,7 @@ class RenamedId:
     # def __getitem__(self, idx: int) -> Slot:
     #    return sorted(self.renaming.values())[idx]
 
-    def slots(self):
+    def slots(self) -> set[Slot]:
         return set(self.renaming.values())
 
 
@@ -369,6 +375,10 @@ class SlottedUF:
         self.symmetries[n] = Group(set(slots))
         return eid
 
+    def makeset_slots(self, slots: list[Slot]) -> RenamedId:
+        eid = self.makeset(len(slots))
+        return Renaming.of_list(zip(eid.slots(), slots)) * eid
+
     def find(self, ma: RenamedId) -> RenamedId:
         # U[m*a] = m*U[id*a] = m*(m'*b)
         # find[m*a] = m*find[id*a] = m*uf[a] = m*(m'*b) = (m o m')*b
@@ -395,7 +405,7 @@ class SlottedUF:
     2 choices: mutatate old public slots or make new eclass e, with less slots and union to it. This is like style b above ie. aegraphs.
 
 
-    Ok. Now let's consider symmettrices
+    Ok. Now let's consider symmetries
 
     {f($42, $13} -perm-> {f($13, $42)} 
 
@@ -409,7 +419,7 @@ class SlottedUF:
         if pslots == remaining_slots:
             return  # nothing to do
         """
-        We need to lose all the the slots related to the losing slots by symmettry
+        We need to lose all the the slots related to the losing slots by symmetry
         """
         G = self.symmetries[a.id]
         losing_slots = {slot for s in pslots - remaining_slots for slot in G.orbit(s)}
@@ -451,7 +461,7 @@ class SlottedUF:
             #    a.rev()[]
         a, b = self.find(a), self.find(b)
         if a.id != b.id:
-            # TODO: merge symmettries
+            # TODO: merge symmetries
             m = b.renaming.compose(a.renaming.rev())
             # a : Z
             # a.id : X
@@ -475,7 +485,7 @@ class SlottedUF:
         b = self.find(b)
         if set(a.renaming.values()) != set(b.renaming.values()):
             return False
-        # but actually symmettries
+        # but actually symmetries
         # a.id : X
         # a.renaming : X -> Y
         # b.id : X
@@ -509,43 +519,6 @@ uf
 x,y
 uf
 """
-
-
-def test_symmettry():
-    uf = SlottedUF()
-    x = uf.makeset(2)
-    slots = list(x.slots())
-    perm = Renaming.of_list([(slots[0], slots[1]), (slots[1], slots[0])])
-    x1 = perm * x
-    uf.union(x, x1)
-    assert uf.is_eq(x, x1)
-    assert len(uf.symmetries[x.id].perms) == 2
-
-
-"""
-TODO:
-Check that redundancy propagate symmettries properly
-Quickcheck something?
-"""
-
-
-def test_basic():
-    uf = SlottedUF()
-    x, y = [uf.makeset(2) for _ in range(2)]
-    r = Renaming.of_list(zip(y.slots(), x.slots()))
-    y1 = r * y
-    uf.union(x, y1)
-    assert uf.is_eq(x, y1)
-    assert not uf.is_eq(y, y1)  # don't even ahve the same domain
-    assert uf.find(x).slots() <= x.slots()
-    assert uf.find(y1).slots() <= x.slots()
-    assert uf.find(y).slots() <= y.slots()
-
-    # z = uf.makeset(1)
-    # should destroy all slots
-    uf.union(x, y)
-    assert uf.find(x).slots() == set()
-    assert uf.find(y1).slots() == set()
 
 
 """

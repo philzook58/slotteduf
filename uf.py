@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Union
 
 
 @dataclass
@@ -45,7 +45,7 @@ class Slot:
 
     Free variables sometimes
     BVar(int) - a de bruijn variable
-    FVar(int) - might be just a fresh counter or it might be a de beuijn level or (string, int) for fresh counter + name
+    FVar(int) - might be just a fresh counter or it might be a de bruijn level or (string, int) for fresh counter + name
     FVar(string)
     https://leanprover-community.github.io/mathlib4_docs/Lean/Expr.html#Lean.Expr
 
@@ -88,9 +88,16 @@ class Renaming:
 
     map: frozenset[tuple[Slot, Slot]]
 
+    def __repr__(self):
+        return "[" + ", ".join(f"{a} -> {b}" for (a, b) in self.map) + "]"
+
     @classmethod
     def of_list(cls, lst: list[tuple[Slot, Slot]]):
         return cls(frozenset(lst))
+
+    @classmethod
+    def identity(cls, slots: list[Slot]):
+        return cls.of_list([(s, s) for s in slots])
 
     def rev(self):
         return Renaming.of_list([(b, a) for (a, b) in self.map])
@@ -113,7 +120,7 @@ class Renaming:
                 return b
         raise KeyError(key)
 
-    def compose(self, q):
+    def compose(self, q: "Renaming") -> "Renaming":
         """
         self : X -> Y
         q : Y -> Z
@@ -131,7 +138,7 @@ class Renaming:
         # returns renaming X -> Z
         return self.compose(q)
 
-    def __mul__(self, eid):
+    def __mul__(self, eid: Union[int, "RenamedId"]) -> "RenamedId":
         # renaming * eid
         # takes eid : Y
         # self : Y -> Z
@@ -201,8 +208,8 @@ class RenamedId:
     def __repr__(self):
         return f"{self.renaming} * id{self.id}"
 
-    def __getitem__(self, idx: int) -> Slot:
-        return sorted(self.renaming.values())[idx]
+    # def __getitem__(self, idx: int) -> Slot:
+    #    return sorted(self.renaming.values())[idx]
 
     def slots(self):
         return set(self.renaming.values())
@@ -212,6 +219,7 @@ class RenamedId:
 type Perm = Renaming
 
 
+@dataclass
 class Group:
     perms: set[Renaming]
 
@@ -241,6 +249,9 @@ class Group:
 
     def orbit(self, slot: Slot) -> set[Slot]:
         return {p.get(slot) for p in self.perms}
+
+    def __len__(self):
+        return len(self.perms)
 
 
 def test_group():
@@ -478,6 +489,11 @@ class SlottedUF:
         #    a.renaming.get(s) == b.renaming.get(s) for s in a.renaming.keys()
         # )
 
+    def symmetry_group(self, a: RenamedId) -> Group:
+        a = self.find(a)
+        # TODO: Actually, this doesn't type check. Group should be conjugated by a.renaming
+        return self.symmetries[a.id]
+
 
 """
 uf = SlottedUF()
@@ -498,7 +514,8 @@ uf
 def test_symmettry():
     uf = SlottedUF()
     x = uf.makeset(2)
-    perm = Renaming.of_list([(x[0], x[1]), (x[1], x[0])])
+    slots = list(x.slots())
+    perm = Renaming.of_list([(slots[0], slots[1]), (slots[1], slots[0])])
     x1 = perm * x
     uf.union(x, x1)
     assert uf.is_eq(x, x1)
@@ -515,11 +532,7 @@ Quickcheck something?
 def test_basic():
     uf = SlottedUF()
     x, y = [uf.makeset(2) for _ in range(2)]
-    slotsy = list(uf.public_slots[y.id])
-    slotsx = list(uf.public_slots[x.id])
-
-    # y1 = RenamedId(y.id, Renaming([(slotsy[0], slotsx[1]), (slotsy[1], slotsx[0])]))
-    r = Renaming.of_list([(x[0], y[0]), (x[1], y[1])]).rev()
+    r = Renaming.of_list(zip(y.slots(), x.slots()))
     y1 = r * y
     uf.union(x, y1)
     assert uf.is_eq(x, y1)

@@ -47,6 +47,7 @@ class Slot:
     BVar(int) - a de bruijn variable
     FVar(int) - might be just a fresh counter or it might be a de beuijn level or (string, int) for fresh counter + name
     FVar(string)
+    https://leanprover-community.github.io/mathlib4_docs/Lean/Expr.html#Lean.Expr
 
     Shape (numeric) slot != fvar. Where shape slots are normalized lexicographically in enodes. Maybe a bit more like a bvar https://www.swi-prolog.org/pldoc/man?predicate=numbervars/3
     fresh slots
@@ -79,7 +80,7 @@ def fresh_slot():
 class Renaming:
     """
     A renaming is a mapping from slots to slots
-    It is a bijective map.
+    It is a bijective map (except in the case of redundancy mappings)
     The domain and codomain may not be the same set
 
     The main use case where they may be the same set is a symmetry.
@@ -532,3 +533,33 @@ def test_basic():
     uf.union(x, y)
     assert uf.find(x).slots() == set()
     assert uf.find(y1).slots() == set()
+
+
+"""
+Example showing that redundancy + symmetry causes new redundancy (i.e. orbit wide redundancies)
+
+i1(x, y) = i1(y, x)
+i1(x, y) = i2(y)
+
+i1(x, y) = i2(y)
+->
+i1(x, y) = i1(a, b)
+
+i1(x, y)
+= i2(y)
+= i1(b, y)
+= i1(y, b)
+= i2(b)
+= i1(a, b)
+
+i(x, y, z) = i(z, y, x)
+i(x, y, z) = j(y, z)
+|
+x redundant
+=> z redundant
+
+=> second arg of j is redundant.
+
+Thus symmetries might cause redundancies to propagate new redundancies.
+
+"""

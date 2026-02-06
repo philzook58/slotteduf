@@ -9,7 +9,6 @@ class SlotApp():
 
 @dataclass(frozen=True)
 class App():
-    v2 = E.add_enode(Var(uf.fresh_slot()))
     op: str
     args: tuple["Term", ...]
 

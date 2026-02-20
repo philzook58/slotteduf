@@ -1,0 +1,71 @@
+
+a b
+
+a = m * b
+
+a -> m * b
+a -m> b
+
+1., flip root shouldn't do anything
+reroot
+b -> m^-1 * a
+
+a -> (m^-1)^-1 * b
+
+(m^-1)^-1 =? m
+
+
+
+S is a semigroup in which every element x in S has a unique inverse y in S in the sense that x = xyx and y = yxy
+forall x, unique y, x = xyx and y = yxy
+
+
+
+3 element union find
+a b c
+a -mab>  b -mbc>  c
+
+reroot to a
+a <inv(mab)- b <inv(mbc)- c
+
+
+inv(mbc * mab) = inv(mab) * inv(mbc)
+
+
+semigroup with involution
+https://en.wikipedia.org/wiki/Semigroup_with_involution
+
+
+a -id> a
+multiple identities?
+or identity is more idempotent / projection
+
+a + b * t
+
+
+OPermuation matric - transpose = inverse
+orthogonal also?
+
+simd vectorization
+
+
+edges : group_element      root : lattice_element x (set of group_elements = symmettries = subgroup)
+         renaming                 (public_slot set) x symmettries
+
+
+blog post
+implementation
+symmetries are not fully supported
+positional version
+compose_partial as default
+interface for semigroup / latticegroup
+slotted smt
+swap list representation of permutations
+
+subst : Var -> Term
+subst* - minikanren - triangular substitutions
+
+[ X -> f(Y,Z,W), Y -> g(Z,W),  Z -> h(W), W -> a]
+
+[X -> a Y + b Z + c W + d, Y -> a' Z + b' W, Z -> a'' W, W -> a''']
+
